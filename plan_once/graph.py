@@ -47,27 +47,24 @@ _worker_logger = logging.getLogger("plan_once.workers")
 # ---------------------------------------------------------------------------
 _DEFAULT_ORCHESTRATOR_PROMPT = (
     "You are a general-purpose Orchestrator. You have exactly ONE TURN.\n\n"
-    "Read the TRIAGE ASSESSMENT and FEATURE RECOMMENDATIONS below, then\n"
-    "delegate ALL work using `delegate_to_worker` tool calls.\n\n"
+    "Read the CONTEXT ASSESSMENT below, then delegate ALL work using "
+    "`delegate_to_worker` tool calls based on your intelligent analysis.\n\n"
     "The `delegate_to_worker` tool takes:\n"
-    "  - task_description: describe the task (SHORT — file contents for\n"
-    "    analysis tasks are AUTO-INJECTED, do NOT re-paste them)\n"
-    "  - mode: 'direct' (single LLM call, no tools — for read/analyze)\n"
-    "          'agent'  (full agent with filesystem tools — for write/\n"
-    "                    edit/create operations or tasks needing tools)\n\n"
-    "RULES:\n"
-    "- READ/ANALYZE tasks: mode='direct'. File contents auto-injected.\n"
-    "- WRITE/EDIT/CREATE tasks: mode='agent'. Worker uses filesystem\n"
-    "  tools (read_file, write_file, edit_file, ls, grep, glob).\n"
-    "- SIMPLE: ONE delegate_to_worker call.\n"
-    "- MODERATE: 2-3 workers.\n"
-    "- COMPLEX: multiple specialized workers.\n\n"
-    "You can handle ANY task — analysis, file editing, code generation,\n"
-    "content creation, research, planning, etc. ALWAYS delegate.\n"
-    "Do NOT do the work yourself — delegate to workers.\n\n"
-    "SKILLS: If AVAILABLE SKILLS are listed in the triage context, pick the\n"
-    "most relevant one per worker and include it in task_description.\n"
-    "Example: 'Use the log-analysis skill to count ERROR lines in app.txt'"
+    "  - task_description: describe the task for the worker\n"
+    "  - mode: 'direct' (single LLM call, fastest when files are embedded)\n"
+    "          'agent'  (full agent with filesystem tools for complex ops)\n\n"
+    "INTELLIGENT DECISION MAKING:\n"
+    "- When files are embedded below: consider mode='direct' for analysis tasks\n"
+    "- When files need to be created/modified: use mode='agent' for filesystem tools\n" 
+    "- When files are too large: use mode='agent' and let workers read selectively\n"
+    "- For complex multi-step tasks: use multiple specialized workers\n"
+    "- For simple tasks: use a single worker\n\n"
+    "SKILLS: If skills are available in the context, pick the most relevant one "
+    "per worker and include it in task_description.\n"
+    "Example: 'Use the log-analysis skill to count ERROR lines in app.txt'\n\n"
+    "You can handle ANY task — analysis, file editing, code generation, "
+    "content creation, research, planning, etc. Make intelligent decisions "
+    "based on the full context provided."
 )
 
 _DEFAULT_SYNTHESIZER_PROMPT = (
@@ -91,21 +88,9 @@ _FILE_PATH_RE = re.compile(
     rf"(?:[\w./$\\-]+/)*[\w.$-]+{_FILE_EXTENSIONS}", re.IGNORECASE,
 )
 
-# Intent detection patterns
-#
-# NOTE: "generate" is in READ, not WRITE.  "Generate a report/summary"
-# is an analysis task (text output); file-creation uses "create".
-_WRITE_INTENT_RE = re.compile(
-    r"\b(edit|write|create|add|modify|update|append|insert|delete|remove"
-    r"|save|change|fix|patch|replace|make|build|put)\b",
-    re.IGNORECASE,
-)
-_READ_INTENT_RE = re.compile(
-    r"\b(read|analyze|analyse|find|search|count|list|show|display|check"
-    r"|scan|inspect|review|examine|look|summarize|summarise|extract|parse"
-    r"|report|summary)\b",
-    re.IGNORECASE,
-)
+# Intent detection patterns - REMOVED
+# Let the orchestrator LLM make intelligent decisions based on context
+# instead of following hardcoded regex rules
 
 _triage_logger = logging.getLogger("plan_once.triage")
 
@@ -142,52 +127,7 @@ def _load_available_skills(skills_root: str = "skills") -> dict[str, tuple[str, 
     return available
 
 
-def _detect_intent(text: str) -> str:
-    """Detect whether the user wants to read/analyze or write/edit.
 
-    Special handling for "generate":
-    - "generate a report/summary/analysis" → read (text output)
-    - "generate a script/file/code at <path>" → write (file creation)
-    - Ambiguous "generate" → defaults to mixed
-
-    Returns:
-        'write' if the query involves creating/modifying files,
-        'read' if the query involves reading/analyzing,
-        'mixed' if both intents are detected,
-        'general' if neither is clearly detected.
-    """
-    has_write = bool(_WRITE_INTENT_RE.search(text))
-    has_read = bool(_READ_INTENT_RE.search(text))
-
-    # Context-aware "generate" handling
-    _generate_re = re.compile(r"\bgenerate\b", re.IGNORECASE)
-    if _generate_re.search(text):
-        # "generate a report/summary/analysis" = read intent
-        _gen_read_re = re.compile(
-            r"\bgenerate\b.*\b(report|summary|analysis|overview|findings)\b",
-            re.IGNORECASE,
-        )
-        # "generate a script/file/code at <path>" = write intent
-        _gen_write_re = re.compile(
-            r"\bgenerate\b.*\b(script|file|code|module|class|function|program)\b",
-            re.IGNORECASE,
-        )
-        if _gen_read_re.search(text):
-            has_read = True
-        elif _gen_write_re.search(text):
-            has_write = True
-        else:
-            # Ambiguous "generate" — treat as both
-            has_read = True
-            has_write = True
-
-    if has_write and has_read:
-        return "mixed"
-    if has_write:
-        return "write"
-    if has_read:
-        return "read"
-    return "general"
 
 
 def _extract_file_paths(text: str) -> list[str]:
@@ -206,10 +146,9 @@ def _extract_file_paths(text: str) -> list[str]:
 def _build_triage_node() -> Callable[[PlanOnceState], dict[str, Any]]:
     """Build a zero-cost triage node (pure Python, no LLM call).
 
-    Extracts file paths from the user's query, reads them, counts lines,
-    and produces a triage assessment that the orchestrator uses to decide
-    how many workers to spin up and whether to embed file contents directly
-    in worker task descriptions.
+    Extracts file paths from the user's query, reads them, and provides
+    full context to the orchestrator LLM. The orchestrator decides worker
+    modes and task distribution intelligently based on the complete picture.
     """
 
     def triage(state: PlanOnceState) -> dict[str, Any]:
@@ -220,11 +159,10 @@ def _build_triage_node() -> Callable[[PlanOnceState], dict[str, Any]]:
                 user_query = str(msg.content)
                 break
 
-        intent = _detect_intent(user_query)
         file_paths = _extract_file_paths(user_query)
 
         _triage_logger.info("─" * 60)
-        _triage_logger.info("TRIAGE ▸ INTENT: %s | QUERY: %s", intent.upper(), user_query[:100])
+        # _triage_logger.info("TRIAGE ▸ INTENT: %s | QUERY: %s", intent.upper(), user_query[:100])
         _triage_logger.info("─" * 60)
 
         # ── Skill discovery (pure Python, zero LLM cost) ─────────────
@@ -252,15 +190,16 @@ def _build_triage_node() -> Callable[[PlanOnceState], dict[str, Any]]:
                 ", ".join(available_skills.keys()),
             )
 
-        # Read files — exact match first, then stem-based fuzzy fallback
+        # Read explicit file paths first
         file_contents: dict[str, str] = {}
         total_lines = 0
         import glob as _glob  # noqa: PLC0415
+        
         for path in file_paths:
             if os.path.isfile(path):
                 candidates = [path]
             else:
-                # e.g. user wrote app.log but file is app.txt — try same stem
+                # Fuzzy matching: user wrote app.log but file is app.txt
                 stem = os.path.splitext(os.path.basename(path))[0]
                 parent = os.path.dirname(path) or "."
                 candidates = _glob.glob(os.path.join(parent, f"{stem}.*"))
@@ -269,6 +208,7 @@ def _build_triage_node() -> Callable[[PlanOnceState], dict[str, Any]]:
                         "TRIAGE ▸ FILES: '%s' not found, fuzzy-matched → %s",
                         path, [os.path.basename(c) for c in candidates],
                     )
+            
             for candidate in candidates:
                 if os.path.isfile(candidate) and candidate not in file_contents:
                     try:
@@ -279,26 +219,19 @@ def _build_triage_node() -> Callable[[PlanOnceState], dict[str, Any]]:
                     except OSError:
                         pass
 
+        # Auto-discover files if no explicit paths found
         if not file_contents:
-            # Try auto-discovering files when user mentions types but no paths
             discovered: list[str] = []
-            # Look for common file types in working directory (max depth 3)
             for pattern in ("**/*.log", "**/*.txt", "**/*.csv", "**/*.json"):
-                discovered.extend(
-                    _glob.glob(pattern, recursive=True)[:10]  # cap at 10
-                )
+                discovered.extend(_glob.glob(pattern, recursive=True)[:10])
                 if len(discovered) >= 15:
                     break
-            # Deduplicate and normalise
-            discovered = list(dict.fromkeys(
-                p.replace("\\", "/") for p in discovered
-            ))[:15]
+            discovered = list(dict.fromkeys(p.replace("\\", "/") for p in discovered))[:15]
 
-            # Match discovered files against filename words in the query
-            # Also match by stem so 'app.log' in query matches 'app.txt' on disk
-            query_words = set(w.lower() for w in re.split(r'[\s\'"]+', user_query))
+            # Match discovered files against filename words in query
+            query_words = set(w.lower() for w in re.split(r'[\s\'\"]+', user_query))
             query_stems = {os.path.splitext(w)[0] for w in query_words if "." in w and len(w) > 3}
-            matched_files: dict[str, str] = {}
+            
             for p in discovered:
                 basename = os.path.basename(p).lower()
                 file_stem = os.path.splitext(basename)[0]
@@ -309,123 +242,18 @@ def _build_triage_node() -> Callable[[PlanOnceState], dict[str, Any]]:
                 ):
                     try:
                         with open(p, encoding="utf-8", errors="replace") as f:
-                            matched_files[p] = f.read()
+                            content = f.read()
+                        file_contents[p] = content
+                        total_lines += content.count("\n") + 1
                     except OSError:
                         pass
 
             _triage_logger.info(
-                "TRIAGE ▸ FILES: No explicit paths (intent=%s). "
-                "Auto-discovered %d, matched+read %d by filename.",
-                intent, len(discovered), len(matched_files),
+                "TRIAGE ▸ FILES: Auto-discovered %d, matched+read %d by filename.",
+                len(discovered), len(file_contents),
             )
 
-            # If we already read matched files, embed them regardless of
-            # intent — the worker will need the data whether it's analyzing
-            # (read) or producing a report/file (write).  Embedding saves
-            # the worker from wasting tool calls to re-read the file.
-            if matched_files:
-                embed_parts: list[str] = []
-                total_matched_lines = 0
-                for p, content in matched_files.items():
-                    lc = content.count("\n") + 1
-                    total_matched_lines += lc
-                    embed_parts.append(f"--- FILE: {p} ({lc} lines) ---")
-                    embed_parts.append(content)
-                    embed_parts.append("--- END FILE ---\n")
-                file_block_matched = "\n".join(embed_parts)
-                complexity_matched = "SIMPLE" if total_matched_lines <= 200 else "MODERATE"
-
-                # Write/mixed intents still need agent mode for file output,
-                # but the SOURCE file data is pre-loaded so reads are free.
-                if intent in ("write", "mixed"):
-                    ctx = (
-                        "TRIAGE ASSESSMENT:\n"
-                        f"  Intent: {intent.upper()}\n"
-                        f"  Files matched by name: {len(matched_files)}\n"
-                        f"  Total lines: {total_matched_lines}\n"
-                        f"  Complexity: {complexity_matched}\n\n"
-                        "STRATEGY: Source file contents are AUTO-INJECTED below.\n"
-                        "Use mode='agent' — worker has filesystem tools for writing.\n"
-                        "Do NOT call read_file on the source file — it is already embedded.\n\n"
-                        "FEATURE RECOMMENDATIONS:\n"
-                        "  - mode: 'agent' (worker needs tools to write output)\n"
-                        "  - filesystem tools: NEEDED for write operations\n"
-                        "  - Source file: ALREADY EMBEDDED — skip read_file\n"
-                    )
-                else:
-                    ctx = (
-                        "TRIAGE ASSESSMENT:\n"
-                        f"  Intent: {intent.upper()}\n"
-                        f"  Files matched by name: {len(matched_files)}\n"
-                        f"  Total lines: {total_matched_lines}\n"
-                        f"  Complexity: {complexity_matched}\n\n"
-                        "STRATEGY: File contents are AUTO-INJECTED below. "
-                        "Use mode='direct' — do NOT call read_file or ls.\n\n"
-                        "FEATURE RECOMMENDATIONS:\n"
-                        "  - mode: 'direct' (file already embedded)\n"
-                        "  - filesystem tools: NOT NEEDED\n"
-                    )
-                _triage_logger.info(
-                    "TRIAGE ▸ RESULT: matched %d file(s), %d lines → %s (embedded, intent=%s)",
-                    len(matched_files), total_matched_lines, complexity_matched, intent,
-                )
-                return {
-                    "triage_context": ctx + skills_block,
-                    "file_contents_for_workers": file_block_matched,
-                }
-
-            # No filename match — list discovered paths for the orchestrator
-            disc_block = ""
-            if discovered:
-                disc_block = (
-                    "\nDISCOVERED FILES (auto-scan of working directory):\n"
-                    + "\n".join(f"  - {p}" for p in discovered)
-                    + "\n\nTell the worker the EXACT file path(s) to operate on.\n"
-                )
-
-            if intent in ("write", "mixed"):
-                ctx = (
-                    "TRIAGE ASSESSMENT:\n"
-                    f"  Intent: {intent.upper()} (file creation/editing detected)\n"
-                    f"  Explicit file paths: 0\n"
-                    f"  Discovered files: {len(discovered)}\n\n"
-                    "STRATEGY: Use mode='agent' so the worker has filesystem tools\n"
-                    "(read_file, write_file, edit_file, ls, grep, glob).\n"
-                    "The worker can find files, read existing content, and write changes.\n"
-                    f"{disc_block}\n"
-                    "FEATURE RECOMMENDATIONS:\n"
-                    "  - mode: 'agent' (worker needs filesystem tools for write operations)\n"
-                    "  - filesystem tools: NEEDED\n"
-                    "  - todos/planning: OPTIONAL\n"
-                    "  - IMPORTANT: Tell the worker the EXACT file path to edit/create.\n"
-                )
-            elif intent == "read":
-                ctx = (
-                    "TRIAGE ASSESSMENT:\n"
-                    f"  Intent: {intent.upper()}\n"
-                    f"  Explicit file paths: 0\n"
-                    f"  Discovered files: {len(discovered)}\n\n"
-                    "STRATEGY: Use mode='agent' so the worker can use filesystem\n"
-                    "tools (ls, read_file, glob, grep) to locate and read files.\n"
-                    f"{disc_block}\n"
-                    "FEATURE RECOMMENDATIONS:\n"
-                    "  - mode: 'agent' (worker needs tools to browse/find files)\n"
-                    "  - filesystem tools: NEEDED\n"
-                )
-            else:
-                ctx = (
-                    "TRIAGE ASSESSMENT:\n"
-                    f"  Intent: {intent.upper()}\n"
-                    f"  Files found: 0\n"
-                    f"{disc_block}\n"
-                    "STRATEGY: Delegate with mode='agent' to give worker full\n"
-                    "filesystem access, or mode='direct' for pure reasoning tasks.\n\n"
-                    "FEATURE RECOMMENDATIONS:\n"
-                    "  - mode: 'agent' if task involves files, 'direct' for reasoning\n"
-                )
-            return {"triage_context": ctx + skills_block}
-
-        # Classify complexity
+        # Classify complexity based on total content
         if total_lines <= 200:
             complexity = "SIMPLE"
         elif total_lines <= 2000:
@@ -433,85 +261,9 @@ def _build_triage_node() -> Callable[[PlanOnceState], dict[str, Any]]:
         else:
             complexity = "COMPLEX"
 
-        # Strategy depends on BOTH complexity AND intent
-        if intent in ("write", "mixed"):
-            strategy = (
-                f"STRATEGY: Intent is {intent.upper()}. Use mode='agent' so "
-                "workers have filesystem tools (read_file, write_file, "
-                "edit_file, ls, grep, glob) to perform file operations."
-            )
-        elif complexity == "SIMPLE":
-            strategy = (
-                "STRATEGY: Files are SMALL (≤200 lines total). "
-                "Use a SINGLE `delegate_to_worker` call, mode='direct'. "
-                "File contents are AUTO-INJECTED — do NOT re-paste them."
-            )
-        elif complexity == "MODERATE":
-            strategy = (
-                "STRATEGY: Files are MODERATE size. Use 2-3 focused workers, "
-                "mode='direct'. File contents are AUTO-INJECTED."
-            )
-        else:
-            strategy = (
-                "STRATEGY: Files are LARGE. Split into multiple specialized "
-                "workers with mode='agent'. Workers use filesystem tools to "
-                "read files themselves."
-            )
-
-        parts: list[str] = [
-            "TRIAGE ASSESSMENT:",
-            f"  Intent:      {intent.upper()}",
-            f"  Files found: {len(file_contents)}",
-            f"  Total lines: {total_lines}",
-            f"  Complexity:  {complexity}",
-            "",
-            strategy,
-            "",
-        ]
-
-        # Feature recommendations — tells the orchestrator which deep
-        # features are appropriate for this intent + complexity level.
-        if intent in ("write", "mixed"):
-            parts.extend([
-                "FEATURE RECOMMENDATIONS:",
-                "  - mode: 'agent' (worker needs filesystem tools for file ops)",
-                "  - filesystem tools: NEEDED (write_file, edit_file, etc.)",
-                "  - todos/planning: OPTIONAL for multi-step file operations",
-                "  - FILE CONTENTS: auto-injected for reference if available",
-                "",
-            ])
-        elif complexity == "SIMPLE":
-            parts.extend([
-                "FEATURE RECOMMENDATIONS:",
-                "  - mode: 'direct' (single LLM call, no tools — fastest)",
-                "  - FILE CONTENTS: AUTO-INJECTED into worker. Do NOT re-paste.",
-                "  - filesystem tools: NOT NEEDED",
-                "  - todos/planning: NOT NEEDED",
-                "",
-            ])
-        elif complexity == "MODERATE":
-            parts.extend([
-                "FEATURE RECOMMENDATIONS:",
-                "  - mode: 'direct' (file contents auto-injected)",
-                "  - FILE CONTENTS: AUTO-INJECTED into worker. Do NOT re-paste.",
-                "  - filesystem tools: AVAILABLE if worker needs additional files",
-                "  - todos/planning: OPTIONAL",
-                "",
-            ])
-        else:
-            parts.extend([
-                "FEATURE RECOMMENDATIONS:",
-                "  - mode: 'agent' (workers need filesystem tools to read files)",
-                "  - filesystem tools: NEEDED (files too large to embed)",
-                "  - todos/planning: RECOMMENDED for structured multi-step work",
-                "  - summarization: RECOMMENDED (large context risk)",
-                "  - subagents: OPTIONAL for deeply nested analysis",
-                "",
-            ])
-
-        # Embed file contents for simple/moderate tasks
+        # Always embed files for SIMPLE/MODERATE complexity
         file_block = ""
-        if complexity in ("SIMPLE", "MODERATE"):
+        if file_contents and complexity in ("SIMPLE", "MODERATE"):
             file_parts: list[str] = []
             for path, content in file_contents.items():
                 line_count = content.count("\n") + 1
@@ -520,12 +272,39 @@ def _build_triage_node() -> Callable[[PlanOnceState], dict[str, Any]]:
                 file_parts.append("--- END FILE ---")
                 file_parts.append("")
             file_block = "\n".join(file_parts)
-            # DON'T add file contents to triage_context (orchestrator prompt).
-            # That was causing the orchestrator to re-paste them.
-        else:
+
+        # Build neutral context for orchestrator
+        parts: list[str] = [
+            "CONTEXT ASSESSMENT:",
+            f"  Files found: {len(file_contents)}",
+            f"  Total lines: {total_lines}",
+            f"  Complexity:  {complexity}",
+        ]
+
+        if file_contents:
+            parts.append("  Available files:")
             for path, content in file_contents.items():
                 line_count = content.count("\n") + 1
-                parts.append(f"  - {path}: {line_count} lines")
+                parts.append(f"    - {path}: {line_count} lines")
+
+        if complexity in ("SIMPLE", "MODERATE") and file_contents:
+            parts.extend([
+                "",
+                "FILE CONTENTS: Available below (auto-injected into workers)",
+                "You can use mode='direct' for analysis tasks or mode='agent' for file operations.",
+            ])
+        elif complexity == "COMPLEX":
+            parts.extend([
+                "",
+                "FILES TOO LARGE: Use mode='agent' and let workers read files as needed.",
+            ])
+        else:
+            # No files found
+            parts.extend([
+                "",
+                "NO FILES: Use mode='agent' if workers need to find/create files,", 
+                "or mode='direct' for pure reasoning tasks.",
+            ])
 
         triage_ctx = "\n".join(parts)
         _triage_logger.info(
@@ -533,6 +312,7 @@ def _build_triage_node() -> Callable[[PlanOnceState], dict[str, Any]]:
             len(file_contents), total_lines, complexity,
             ", ".join(available_skills.keys()) if available_skills else "none",
         )
+        
         return {
             "triage_context": triage_ctx + skills_block,
             "file_contents_for_workers": file_block,
