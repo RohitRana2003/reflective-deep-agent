@@ -1,0 +1,120 @@
+# Contrastive Reflection Memory  (ExACT-inspired)
+# ─────────────────────────────────────────────────────────────────
+# Each entry captures a past mistake and the correct approach.
+# Loaded by MemoryMiddleware and injected into every worker's system
+# prompt as <agent_memory> so workers avoid repeating the same errors.
+#
+# Format:
+#   task_type : which skill/task category this applies to
+#   expected  : what the worker assumed would happen
+#   actual    : what actually happened (the mistake)
+#   reflection: the corrected strategy to use next time
+# ─────────────────────────────────────────────────────────────────
+
+reflections:
+
+  # ── Log Analysis ─────────────────────────────────────────────
+  - task_type: log-analysis
+    expected: "read_file on the whole log file would give all ERROR lines"
+    actual: "read_file returns raw text; manual scanning misses lines when log is large"
+    reflection: >
+      For log analysis, ALWAYS start with grep using a pattern like
+      'ERROR|WARN|CRITICAL|Exception|Traceback' to extract matching lines first.
+      Then use read_file only to get surrounding context for specific lines.
+      This is faster and more reliable than reading the whole file.
+
+  - task_type: log-analysis
+    expected: "Counting newlines in the file content gives the exact log entry count"
+    actual: "Windows logs use CRLF; some entries span multiple lines (stack traces)"
+    reflection: >
+      Use grep -c to count matches per log level.
+      Do not count newlines manually — multi-line stack traces inflate counts.
+      Command: grep pattern='ERROR' to get ERROR count, grep pattern='WARN' for WARN count.
+
+  - task_type: log-analysis
+    expected: "The log file is at the path the user specified"
+    actual: "File not found — path was relative and working directory was different"
+    reflection: >
+      Always ls the directory first to confirm the file exists before reading.
+      If not found, use glob with pattern '**/*.log' to discover log files.
+      Report the actual discovered path to the orchestrator.
+
+  - task_type: log-analysis
+    expected: "All ERROR lines indicate real application errors"
+    actual: "Some ERROR lines are test/noise entries; timestamps reveal pattern"
+    reflection: >
+      After extracting ERROR lines, group them by:
+      1. Timestamp (hour/minute) to find error bursts
+      2. Error message text to find recurring vs unique errors
+      3. Component/module prefix to find the failing subsystem
+      This gives root cause analysis, not just a raw list.
+
+  # ── File Editing ─────────────────────────────────────────────
+  - task_type: file-editing
+    expected: "edit_file would append new content to the end of the file"
+    actual: "edit_file replaced the entire file with only the new content"
+    reflection: >
+      Before any edit: use read_file to get the FULL current content.
+      Then construct the NEW content = original + additions.
+      Then write_file with the complete new content.
+      Never assume edit_file appends — always read first, write the full result.
+
+  - task_type: file-editing
+    expected: "The file path given by the user is the correct path to edit"
+    actual: "Path was wrong — file was in a subdirectory with a different name"
+    reflection: >
+      Before editing, confirm the file exists with ls or glob.
+      If not found at the specified path, search with glob '**/<filename>'
+      and report the found path before editing.
+
+  # ── Code Generation ──────────────────────────────────────────
+  - task_type: code-generation
+    expected: "Writing the script to output/ would succeed"
+    actual: "output/ directory did not exist, write_file failed"
+    reflection: >
+      Before writing to a directory that may not exist, check with ls.
+      If the directory is missing, note it in your response — the filesystem
+      middleware will create parent directories on write_file automatically,
+      but only if the path is valid. Always use relative paths from project root.
+
+  # ── Report Writing ───────────────────────────────────────────
+  - task_type: report-writing
+    expected: "Writing a markdown report with a generic structure is sufficient"
+    actual: "Report lacked specific metrics — counts, timestamps, file paths"
+    reflection: >
+      A good log analysis report MUST include:
+      - Exact counts per log level (INFO: N, WARN: N, ERROR: N)
+      - First and last timestamp from the log
+      - Top 3-5 ERROR messages by frequency
+      - Any stack traces or exception types found
+      - Specific file path of the analysed log
+      Generic summaries without numbers are not useful.
+
+  # ── Auto-generated (2026-03-16 13:33) ─────────────────────────────────
+  - task_type: log-analysis
+    expected: "Worker would find server.log in 1-2 calls"
+    actual: "Worker made 8 tool calls with 3 duplicate read_file calls"
+    reflection: >
+      Use glob once to find the file, read_file once.
+      Never re-read the same file.
+      Plan edits before executing.
+
+  # ── Auto-generated (2026-03-16 13:38) ─────────────────────────────────
+  - task_type: log-analysis
+    expected: "Worker would efficiently process server.log and add timestamps in under 5 tool calls"
+    actual: "Worker inefficiently used 10 tool calls including redundant read_file and multiple grep operations"
+    reflection: >
+      Always read the entire file first to understand its structure before applying transformations.
+      Use a single pass approach with appropriate tools like awk or sed for line-by-line processing.
+      Avoid repeated read_file calls on the same file.
+      Combine filtering and transformation operations into fewer, more powerful commands.
+
+  # ── Auto-generated (2026-03-16 13:43) ─────────────────────────────────
+  - task_type: log-analysis
+    expected: "grep would find matches for the timestamp pattern in /server.log"
+    actual: "grep failed with file-not-found error because the path was incorrect"
+    reflection: >
+      Always verify the correct file path before running grep commands.
+      Use absolute paths or check the current working directory first.
+      Confirm file existence with ls or stat before pattern matching.
+      Double-check path syntax and permissions when files aren't found.

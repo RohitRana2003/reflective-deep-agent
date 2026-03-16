@@ -1,0 +1,53 @@
+2025-01-15 08:00:01 INFO  [main] Application started successfully on port 8080
+2025-01-15 08:00:02 INFO  [db] Connected to PostgreSQL at db.internal:5432
+2025-01-15 08:01:15 INFO  [api] GET /health -> 200 (3ms)
+2025-01-15 08:02:33 WARN  [api] Slow query detected: GET /users took 2340ms
+2025-01-15 08:03:01 INFO  [api] POST /auth/login -> 200 (45ms)
+2025-01-15 08:05:44 ERROR [db] Connection pool exhausted — max_connections=50 reached
+2025-01-15 08:05:44 ERROR [api] POST /orders -> 503 Service Unavailable (timeout after 30000ms)
+2025-01-15 08:05:45 WARN  [db] Retrying connection pool expansion...
+2025-01-15 08:05:46 INFO  [db] Connection pool expanded to 75
+2025-01-15 08:06:10 INFO  [api] GET /health -> 200 (2ms)
+2025-01-15 08:10:22 ERROR [auth] JWT token validation failed: token expired for user_id=4421
+2025-01-15 08:10:22 WARN  [api] GET /dashboard -> 401 Unauthorized
+2025-01-15 08:12:00 INFO  [scheduler] Cron job 'cleanup_sessions' started
+2025-01-15 08:12:05 INFO  [scheduler] Cleaned up 342 expired sessions
+2025-01-15 08:15:33 ERROR [api] POST /payments -> 500 Internal Server Error
+2025-01-15 08:15:33 ERROR [payments] Stripe API returned 502: Bad Gateway
+2025-01-15 08:15:34 ERROR [payments] Payment processing failed for order_id=90210, amount=$149.99
+2025-01-15 08:15:35 WARN  [alerts] Alert triggered: payment_failure_rate > 5% in last 5min
+2025-01-15 08:20:01 INFO  [api] GET /health -> 200 (2ms)
+2025-01-15 08:25:17 WARN  [api] Slow query detected: GET /reports/monthly took 4102ms
+2025-01-15 08:30:00 INFO  [scheduler] Cron job 'generate_metrics' started
+2025-01-15 08:30:45 INFO  [scheduler] Metrics generation completed in 45s
+2025-01-15 08:35:12 ERROR [db] Deadlock detected on table 'inventory' — transaction rolled back
+2025-01-15 08:35:12 WARN  [api] POST /inventory/update -> 409 Conflict
+2025-01-15 08:40:01 INFO  [api] GET /health -> 200 (1ms)
+2025-01-15 08:45:00 INFO  [main] Memory usage: 1.2GB / 4.0GB (30%)
+2025-01-15 08:50:22 ERROR [api] GET /users/search?q=test -> 500 Internal Server Error
+2025-01-15 08:50:22 ERROR [search] Elasticsearch cluster RED — 2 of 5 shards unassigned
+2025-01-15 08:50:23 WARN  [alerts] Alert triggered: elasticsearch_cluster_health=RED
+2025-01-15 08:55:01 INFO  [api] GET /health -> 200 (2ms)
+2025-01-15 09:00:00 INFO  [main] Memory usage: 1.8GB / 4.0GB (45%)
+2025-01-15 09:05:17 WARN  [api] Rate limit exceeded for IP 192.168.1.105 — 429 Too Many Requests
+2025-01-15 09:05:18 WARN  [api] Rate limit exceeded for IP 192.168.1.105 — 429 Too Many Requests
+2025-01-15 09:05:19 WARN  [security] Possible brute-force attempt from IP 192.168.1.105
+2025-01-15 09:10:01 INFO  [api] GET /health -> 200 (3ms)
+2025-01-15 09:15:00 INFO  [main] Memory usage: 2.4GB / 4.0GB (60%)
+2025-01-15 09:20:33 WARN  [gc] GC pause: 450ms (threshold: 200ms)
+2025-01-15 09:25:00 INFO  [main] Memory usage: 3.1GB / 4.0GB (78%)
+2025-01-15 09:25:01 WARN  [alerts] Alert triggered: memory_usage > 75%
+2025-01-15 09:30:00 ERROR [main] OutOfMemoryError: Java heap space — triggering emergency GC
+2025-01-15 09:30:01 WARN  [main] Emergency GC freed 1.5GB — memory now at 1.6GB / 4.0GB (40%)
+2025-01-15 09:30:02 WARN  [alerts] Alert triggered: oom_near_miss
+2025-01-15 09:35:01 INFO  [api] GET /health -> 200 (2ms)
+2025-01-15 09:36:15 INFO  [api] GET /products -> 200 (12ms)
+2025-01-15 09:37:30 WARN  [cache] Cache miss rate high: 67% (threshold: 50%)
+2025-01-15 09:38:45 INFO  [cache] Warming up cache for product catalog
+2025-01-15 09:39:22 ERROR [api] PUT /users/12345 -> 400 Bad Request
+2025-01-15 09:39:22 ERROR [validation] Invalid email format: user@domain
+2025-01-15 09:40:01 INFO  [api] GET /health -> 200 (2ms)
+2025-01-15 09:42:18 WARN  [db] High connection latency detected: avg=145ms (threshold: 100ms)
+2025-01-15 09:45:00 INFO  [main] Memory usage: 1.9GB / 4.0GB (48%)
+2025-01-15 09:47:33 INFO  [scheduler] Cron job 'backup_database' started
+2025-01-15 09:47:58 INFO  [scheduler] Database backup completed in 25s, size: 2.3GB
